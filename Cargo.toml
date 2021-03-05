@@ -1,0 +1,12 @@
+[package]
+name = "totup"
+version = "0.1.0"
+authors = ["Gilbert Roehrbein <gilbert.rohrbein@logmein.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+grep = "0.2.7"
+ignore = "0.4.17"
+termcolor = "1.1.2"
