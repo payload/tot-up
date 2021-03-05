@@ -1,7 +1,11 @@
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::{collections::HashMap, path::PathBuf};
 
-use grep::{matcher::Matcher, regex::RegexMatcher, searcher::{Searcher, SearcherBuilder, Sink, SinkError, SinkMatch}};
-use ignore::{DirEntry, Walk, WalkBuilder};
+use grep::{
+    matcher::Matcher,
+    regex::RegexMatcher,
+    searcher::{Searcher, Sink, SinkFinish, SinkMatch},
+};
+use ignore::{DirEntry, WalkBuilder};
 
 fn main() {
     for result in WalkBuilder::new("./").build() {
@@ -18,28 +22,24 @@ fn search(entry: DirEntry) {
     }
 
     let path = entry.path();
-
-    println!("{}", path.display());
-
     let matcher = grep::regex::RegexMatcherBuilder::new()
         .build(r"\w{3}\w*")
         .expect("good regex");
-
-    let search_writer = grep::cli::stdout(termcolor::ColorChoice::Auto);
-    let mut search_printer = grep::printer::Standard::new(search_writer);
-    let search_sink = search_printer.sink_with_path(matcher.clone(), path);
-
     let collect_data = CollectData {
         matcher: matcher.clone(),
         path: path.to_owned(),
+        term_count: Default::default(),
     };
 
-    grep::searcher::Searcher::new().search_path(matcher, path, collect_data).expect("search path");
+    grep::searcher::Searcher::new()
+        .search_path(matcher, path, collect_data)
+        .expect("search path");
 }
 
 struct CollectData {
     matcher: RegexMatcher,
     path: PathBuf,
+    term_count: HashMap<String, u64>,
 }
 
 impl Sink for CollectData {
@@ -50,19 +50,36 @@ impl Sink for CollectData {
         _searcher: &Searcher,
         sink_match: &SinkMatch,
     ) -> Result<bool, Self::Error> {
-        let mut matches = vec![];
+        let term_count = &mut self.term_count;
 
         let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
             let slice = &sink_match.bytes()[mat];
-            let str = String::from_utf8_lossy(slice);
-            matches.push(str);
+            let term = String::from_utf8_lossy(slice);
+
+            if let Some(count) = term_count.get_mut(term.as_ref()) {
+                *count += 1;
+            } else {
+                term_count.insert(term.to_string(), 1);
+            }
+
             true
         });
 
-        for mat in matches {
-            println!("{} {}", self.path.display(), mat);
+        Ok(true)
+    }
+
+    fn finish(&mut self, _searcher: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
+        println!("{}:", self.path.display());
+
+        let mut term_counts: Vec<_> = self.term_count.drain().collect();
+        term_counts.sort_by_key(|entry| entry.1);
+
+        println!(" terms: {}", term_counts.len());
+        println!(" top 5:");
+        for (term, count) in term_counts[term_counts.len().saturating_sub(5)..].iter() {
+            println!("  {} {}", term, count);
         }
 
-        Ok(true)
+        Ok(())
     }
 }
