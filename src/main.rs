@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io::stdin, path::PathBuf, sync::{Arc, RwLock}};
+use std::{
+    collections::HashMap,
+    io::stdin,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use grep::{
     matcher::Matcher,
@@ -6,9 +11,38 @@ use grep::{
     searcher::{Searcher, Sink, SinkFinish, SinkMatch},
 };
 use ignore::{DirEntry, WalkBuilder, WalkState};
+use internment::ArcIntern;
+
+// SessionData holds terms, data hierarchy, filters
+// Walker iterates directories
+// CollectData collects EntryData from files
+// EntryData holds terms and counts for an entry
+
+/// trade higher runtime with lower peak memory usage
+type Term = ArcIntern<String>;
+
+#[derive(Default)]
+struct SessionData {
+    #[cfg(feature = "record-terms")]
+    terms: HashSet<Term>,
+
+    entries: Vec<EntryData>,
+}
+
+struct CollectData {
+    matcher: RegexMatcher,
+    entry_data: EntryData,
+    sink: Arc<RwLock<SessionData>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct EntryData {
+    path: PathBuf,
+    term_count: HashMap<Term, u64>,
+}
 
 fn main() {
-    let data: Vec<Data> = Vec::new();
+    let data = SessionData::default();
     let data_locked = Arc::new(RwLock::new(data));
 
     let handle_dir_entry = |result| {
@@ -21,20 +55,20 @@ fn main() {
     };
 
     WalkBuilder::new("./")
+        // .threads(8) // TODO does it really use all cores?
         .build_parallel()
         .run(|| Box::new(handle_dir_entry));
 
     let data = data_locked.read().expect("unlock");
 
-
-    println!("visited files {}", data.len());
+    println!("visited files {}", data.entries.len());
 
     if true {
-        let (w, h) = term_size::dimensions().unwrap_or((80, 40));
+        let (_w, h) = term_size::dimensions().unwrap_or((80, 40));
 
         let mut sum = Default::default();
 
-        for entry in data.iter() {
+        for entry in data.entries.iter() {
             merge(&mut sum, &entry.term_count);
         }
 
@@ -56,18 +90,20 @@ fn main() {
             }
         }
 
-        let mut buf = String::new();
-        let _ = stdin().read_line(&mut buf);
+        if false {
+            let mut buf = String::new();
+            let _ = stdin().read_line(&mut buf);
+        }
     }
 }
 
-fn merge(dest: &mut HashMap<String, u64>, src: &HashMap<String, u64>) {
+fn merge(dest: &mut HashMap<Term, u64>, src: &HashMap<Term, u64>) {
     for (key, value) in src.iter() {
         *dest.entry(key.clone()).or_default() += *value;
     }
 }
 
-fn search(entry: DirEntry, data_sink: Arc<RwLock<Vec<Data>>>) {
+fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
     if !entry.file_type().unwrap().is_file() {
         return;
     }
@@ -78,7 +114,7 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<Vec<Data>>>) {
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
-        data: Data {
+        entry_data: EntryData {
             path: path.to_path_buf(),
             ..Default::default()
         },
@@ -90,16 +126,15 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<Vec<Data>>>) {
         .expect("search path");
 }
 
-struct CollectData {
-    matcher: RegexMatcher,
-    data: Data,
-    sink: Arc<RwLock<Vec<Data>>>,
-}
+impl SessionData {
+    fn insert_entry_data(&mut self, data: &EntryData) {
+        #[cfg(feature = "record-terms")]
+        for (key, _value) in data.term_count.iter() {
+            self.terms.insert(key.clone());
+        }
 
-#[derive(Clone, Debug, Default)]
-struct Data {
-    path: PathBuf,
-    term_count: HashMap<String, u64>,
+        self.entries.push(data.clone());
+    }
 }
 
 impl Sink for CollectData {
@@ -110,16 +145,17 @@ impl Sink for CollectData {
         _searcher: &Searcher,
         sink_match: &SinkMatch,
     ) -> Result<bool, Self::Error> {
-        let term_count = &mut self.data.term_count;
+        let term_count = &mut self.entry_data.term_count;
 
         let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
             let slice = &sink_match.bytes()[mat];
-            let term = String::from_utf8_lossy(slice);
+            let string: &str = &String::from_utf8_lossy(slice);
+            let term = Term::from(string);
 
-            if let Some(count) = term_count.get_mut(term.as_ref()) {
+            if let Some(count) = term_count.get_mut(&term) {
                 *count += 1;
             } else {
-                term_count.insert(term.to_string(), 1);
+                term_count.insert(term, 1);
             }
 
             true
@@ -130,9 +166,9 @@ impl Sink for CollectData {
 
     fn finish(&mut self, _searcher: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
         if false {
-            println!("{}:", self.data.path.display());
+            println!("{}:", self.entry_data.path.display());
 
-            let mut term_counts: Vec<_> = self.data.term_count.iter().collect();
+            let mut term_counts: Vec<_> = self.entry_data.term_count.iter().collect();
             term_counts.sort_by_key(|entry| entry.1);
 
             println!(" terms: {}", term_counts.len());
@@ -146,23 +182,16 @@ impl Sink for CollectData {
             }
         }
 
-        self.sink.write().expect("write").push(self.data.clone());
+        self.sink
+            .write()
+            .expect("write")
+            .insert_entry_data(&self.entry_data);
 
         Ok(())
     }
 }
 
-const BARS: &[char] = &[
-    ' ',
-    '▏',
-    '▎',
-    '▍',
-    '▌',
-    '▋',
-    '▊',
-    '▉',
-    '█',
-];
+const BARS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 fn pct_to_bar(pct: f64, width: usize) -> String {
     let mult = (BARS.len() - 1) * width;
