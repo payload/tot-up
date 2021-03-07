@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, io::stdin, path::PathBuf, sync::{Arc, RwLock}};
 
 use grep::{
     matcher::Matcher,
@@ -30,16 +26,20 @@ fn main() {
 
     let data = data_locked.read().expect("unlock");
 
+
     println!("visited files {}", data.len());
 
     if true {
+        let (w, h) = term_size::dimensions().unwrap_or((80, 40));
+
         let mut sum = Default::default();
 
         for entry in data.iter() {
             merge(&mut sum, &entry.term_count);
         }
 
-        println!("sum top 20:");
+        let top_n = h - 2; // TODO this fails for tiniest terminals
+        println!("sum top {}:", top_n);
 
         let mut term_counts: Vec<_> = sum.iter().collect();
         term_counts.sort_by_key(|entry| entry.1);
@@ -47,14 +47,17 @@ fn main() {
         if let Some(max_entry) = term_counts.last() {
             let max_count = *max_entry.1 as f64;
 
-            for (term, count) in term_counts[term_counts.len().saturating_sub(20)..]
+            for (term, count) in term_counts[term_counts.len().saturating_sub(top_n)..]
                 .iter()
                 .rev()
             {
-                let bar = pct_to_bar(**count as f64 / max_count, 25);
-                println!(" {} {} {}", bar, term, count);
+                let bar = pct_to_bar(**count as f64 / max_count, 10);
+                println!(" {} {} {}", bar, count, term);
             }
         }
+
+        let mut buf = String::new();
+        let _ = stdin().read_line(&mut buf);
     }
 }
 
