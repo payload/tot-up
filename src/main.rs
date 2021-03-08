@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     io::stdin,
-    path::PathBuf,
     sync::{Arc, RwLock},
 };
 
@@ -37,8 +36,9 @@ struct CollectData {
 
 #[derive(Clone, Debug, Default)]
 struct EntryData {
-    path: PathBuf,
-    term_count: HashMap<Term, u64>,
+    path: String,
+    term_count: HashMap<Term, usize>,
+    sorted_vec: Option<Vec<(Term, usize)>>,
 }
 
 fn main() {
@@ -61,34 +61,34 @@ fn main() {
 
     let data = data_locked.read().expect("unlock");
 
-    println!("visited files {}", data.entries.len());
-
     if true {
         let (_w, h) = term_size::dimensions().unwrap_or((80, 40));
 
-        let mut sum = Default::default();
+        let mut sum = EntryData {
+            path: "./".to_string(),
+            ..Default::default()
+        };
 
         for entry in data.entries.iter() {
-            merge(&mut sum, &entry.term_count);
+            println!("{}", entry.path);
+            merge(&mut sum.term_count, &entry.term_count);
         }
 
-        let top_n = h - 2; // TODO this fails for tiniest terminals
-        println!("sum top {}:", top_n);
+        sum.sort();
+        let panel = sum.build_histogram(10, h - 1);
 
-        let mut term_counts: Vec<_> = sum.iter().collect();
-        term_counts.sort_by_key(|entry| entry.1);
+        //
 
-        if let Some(max_entry) = term_counts.last() {
-            let max_count = *max_entry.1 as f64;
+        let entry = &mut data.entries[0];
+        entry.sort();
+        let panel2 = entry.build_histogram(10, h - 1);
 
-            for (term, count) in term_counts[term_counts.len().saturating_sub(top_n)..]
-                .iter()
-                .rev()
-            {
-                let bar = pct_to_bar(**count as f64 / max_count, 10);
-                println!(" {} {} {}", bar, count, term);
-            }
+        let lines_n = panel.lines.len().max(panel2.lines.len());
+        for line in panel.lines.iter() {
+            println!("{}", line);
         }
+
+        //
 
         if false {
             let mut buf = String::new();
@@ -97,7 +97,7 @@ fn main() {
     }
 }
 
-fn merge(dest: &mut HashMap<Term, u64>, src: &HashMap<Term, u64>) {
+fn merge(dest: &mut HashMap<Term, usize>, src: &HashMap<Term, usize>) {
     for (key, value) in src.iter() {
         *dest.entry(key.clone()).or_default() += *value;
     }
@@ -109,13 +109,14 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
     }
 
     let path = entry.path();
+    let path_str = path.to_string_lossy().to_string();
     let matcher = grep::regex::RegexMatcherBuilder::new()
         .build(r"\w{3}\w*")
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
         entry_data: EntryData {
-            path: path.to_path_buf(),
+            path: path_str,
             ..Default::default()
         },
         sink: data_sink.clone(),
@@ -137,6 +138,12 @@ impl SessionData {
     }
 }
 
+impl CollectData {
+    fn exclude(&self, _string: &str) -> bool {
+        false
+    }
+}
+
 impl Sink for CollectData {
     type Error = std::io::Error;
 
@@ -145,28 +152,27 @@ impl Sink for CollectData {
         _searcher: &Searcher,
         sink_match: &SinkMatch,
     ) -> Result<bool, Self::Error> {
-        let term_count = &mut self.entry_data.term_count;
+        let mut matches = Vec::new();
 
         let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
             let slice = &sink_match.bytes()[mat];
-            let string: &str = &String::from_utf8_lossy(slice);
-            let term = Term::from(string);
-
-            if let Some(count) = term_count.get_mut(&term) {
-                *count += 1;
-            } else {
-                term_count.insert(term, 1);
-            }
-
+            matches.push(String::from_utf8_lossy(slice));
             true
         });
+
+        for mat in matches {
+            if !self.exclude(&mat) {
+                let term = Term::from(&mat as &str);
+                *self.entry_data.term_count.entry(term).or_default() += 1;
+            }
+        }
 
         Ok(true)
     }
 
     fn finish(&mut self, _searcher: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
         if false {
-            println!("{}:", self.entry_data.path.display());
+            println!("{}:", self.entry_data.path);
 
             let mut term_counts: Vec<_> = self.entry_data.term_count.iter().collect();
             term_counts.sort_by_key(|entry| entry.1);
@@ -189,6 +195,45 @@ impl Sink for CollectData {
 
         Ok(())
     }
+}
+
+impl EntryData {
+    fn sort(&mut self) -> &Vec<(Term, usize)> {
+        let mut sorted: Vec<(Term, usize)> = self
+            .term_count
+            .iter()
+            .map(|e| ((*e.0).clone(), *e.1))
+            .collect();
+        sorted.sort_by_key(|entry| std::usize::MAX - entry.1);
+        self.sorted_vec = Some(sorted);
+        self.sorted_vec.as_ref().unwrap()
+    }
+
+    fn build_histogram(&self, bar_width: usize, height: usize) -> Panel {
+        let mut panel = Panel::default();
+        let top_n = height - 1;
+
+        panel
+            .lines
+            .push(format!("{} {} terms:", self.path, self.term_count.len()));
+
+        if let Some(sorted) = &self.sorted_vec {
+            for (term, count) in sorted[..top_n].iter().rev() {
+                let bar = pct_to_bar(*count as f64, bar_width);
+                let line = format!("{} {}", bar, term);
+                panel.width = panel.width.max(line.len());
+                panel.lines.push(line);
+            }
+        }
+
+        panel
+    }
+}
+
+#[derive(Default)]
+struct Panel {
+    width: usize,
+    lines: Vec<String>,
 }
 
 const BARS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
