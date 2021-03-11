@@ -13,6 +13,11 @@ use grep::{
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use internment::ArcIntern;
 
+use prettytable::{
+    format::{FormatBuilder, LinePosition, LineSeparator},
+    Cell, Row, Table,
+};
+
 // SessionData holds terms, data hierarchy, filters
 // Walker iterates directories
 // CollectData collects EntryData from files
@@ -65,37 +70,71 @@ fn main() {
 
     println!("visited files {}", data.entries.len());
 
+    for entry in data.entries.iter() {
+        println!("{}", entry.path.display());
+    }
+
     if true {
-        let (_w, h) = term_size::dimensions().unwrap_or((80, 40));
+        let (w, h) = term_size::dimensions().unwrap_or((80, 40));
 
-        let mut sum = Default::default();
-
-        for entry in data.entries.iter() {
-            merge(&mut sum, &entry.term_count);
-        }
+        // how many entries do we want to show?
+        let entries_to_show = data.entries.len();
+        let space_per_entry = w / entries_to_show - entries_to_show; // DANGER ZONE
 
         let top_n = h - 2; // TODO this fails for tiniest terminals
-        println!("sum top {}:", top_n);
 
-        let mut term_counts: Vec<_> = sum.iter().collect();
-        term_counts.sort_by_key(|entry| entry.1);
+        let cols: Vec<Cell> = data
+            .entries
+            .iter()
+            .map(|e| Cell::new(&e.display_histogram(top_n)))
+            .collect();
 
-        if let Some(max_entry) = term_counts.last() {
-            let max_count = *max_entry.1 as f64;
-
-            for (term, count) in term_counts[term_counts.len().saturating_sub(top_n)..]
-                .iter()
-                .rev()
-            {
-                let bar = pct_to_bar(**count as f64 / max_count, 10);
-                println!(" {} {} {}", bar, count, term);
-            }
-        }
+        let mut table = Table::new();
+        table.set_format(
+            FormatBuilder::new()
+                .borders('│')
+                .padding(1, 1)
+                .separators(
+                    &[LinePosition::Title],
+                    LineSeparator::new('─', '─', '├', '┤'),
+                )
+                .separators(&[LinePosition::Top], LineSeparator::new('─', '─', '┌', '┐'))
+                .separators(
+                    &[LinePosition::Bottom],
+                    LineSeparator::new('─', '─', '└', '┘'),
+                )
+                .build(),
+        );
+        table.add_row(Row::new(cols));
+        table.printstd();
 
         if false {
             let mut buf = String::new();
             let _ = stdin().read_line(&mut buf);
         }
+    }
+}
+
+impl EntryData {
+    fn display_histogram(&self, height: usize) -> String {
+        // self.path
+        // ... bars count term
+        let line_one = Some(format!("{}:\n", self.path.display())).into_iter();
+
+        let mut term_counts: Vec<_> = self.term_count.iter().collect();
+        term_counts.sort_by_key(|entry| std::u64::MAX - entry.1);
+        let max_count = *term_counts.first().unwrap().1 as f64;
+
+        let mut bars_counts = term_counts.iter().map(|(term, count)| {
+            format!(
+                "{} {} {}\n",
+                pct_to_bar(**count as f64 / max_count, 10),
+                count,
+                term
+            )
+        });
+
+        line_one.chain(bars_counts).take(height).collect()
     }
 }
 
@@ -154,6 +193,7 @@ impl Sink for CollectData {
             let string: &str = &String::from_utf8_lossy(slice);
             let term = Term::from(string);
 
+            // counting the terms per file
             term_count.entry(term).and_modify(|x| *x += 1).or_insert(1);
 
             true
@@ -163,6 +203,7 @@ impl Sink for CollectData {
     }
 
     fn finish(&mut self, _searcher: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
+        // TODO we want to throw this away in a reusable build_histogram method
         if false {
             println!("{}:", self.entry_data.path.display());
 
