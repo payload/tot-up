@@ -68,51 +68,33 @@ fn main() {
 
     let data = data_locked.read().expect("unlock");
 
-    println!("visited files {}", data.entries.len());
+    let (_w, h) = term_size::dimensions().unwrap_or((80, 40));
+    let top_n = h - 2; // TODO this fails for tiniest terminals
 
-    for entry in data.entries.iter() {
-        println!("{}", entry.path.display());
-    }
+    let cols: Vec<Cell> = data
+        .entries
+        .iter()
+        .map(|e| Cell::new(&e.display_histogram(top_n)))
+        .collect();
 
-    if true {
-        let (w, h) = term_size::dimensions().unwrap_or((80, 40));
-
-        // how many entries do we want to show?
-        let entries_to_show = data.entries.len();
-        let space_per_entry = w / entries_to_show - entries_to_show; // DANGER ZONE
-
-        let top_n = h - 2; // TODO this fails for tiniest terminals
-
-        let cols: Vec<Cell> = data
-            .entries
-            .iter()
-            .map(|e| Cell::new(&e.display_histogram(top_n)))
-            .collect();
-
-        let mut table = Table::new();
-        table.set_format(
-            FormatBuilder::new()
-                .borders('│')
-                .padding(1, 1)
-                .separators(
-                    &[LinePosition::Title],
-                    LineSeparator::new('─', '─', '├', '┤'),
-                )
-                .separators(&[LinePosition::Top], LineSeparator::new('─', '─', '┌', '┐'))
-                .separators(
-                    &[LinePosition::Bottom],
-                    LineSeparator::new('─', '─', '└', '┘'),
-                )
-                .build(),
-        );
-        table.add_row(Row::new(cols));
-        table.printstd();
-
-        if false {
-            let mut buf = String::new();
-            let _ = stdin().read_line(&mut buf);
-        }
-    }
+    let mut table = Table::new();
+    table.set_format(
+        FormatBuilder::new()
+            .borders('│')
+            .padding(1, 1)
+            .separators(
+                &[LinePosition::Title],
+                LineSeparator::new('─', '─', '├', '┤'),
+            )
+            .separators(&[LinePosition::Top], LineSeparator::new('─', '─', '┌', '┐'))
+            .separators(
+                &[LinePosition::Bottom],
+                LineSeparator::new('─', '─', '└', '┘'),
+            )
+            .build(),
+    );
+    table.add_row(Row::new(cols));
+    table.printstd();
 }
 
 impl EntryData {
@@ -125,7 +107,7 @@ impl EntryData {
         term_counts.sort_by_key(|entry| std::u64::MAX - entry.1);
         let max_count = *term_counts.first().unwrap().1 as f64;
 
-        let mut bars_counts = term_counts.iter().map(|(term, count)| {
+        let bars_counts = term_counts.iter().map(|(term, count)| {
             format!(
                 "{} {} {}\n",
                 pct_to_bar(**count as f64 / max_count, 10),
@@ -138,7 +120,7 @@ impl EntryData {
     }
 }
 
-fn merge(dest: &mut HashMap<Term, u64>, src: &HashMap<Term, u64>) {
+fn tot_up(dest: &mut HashMap<Term, u64>, src: &HashMap<Term, u64>) {
     for (key, value) in src.iter() {
         *dest.entry(key.clone()).or_default() += *value;
     }
@@ -203,24 +185,6 @@ impl Sink for CollectData {
     }
 
     fn finish(&mut self, _searcher: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
-        // TODO we want to throw this away in a reusable build_histogram method
-        if false {
-            println!("{}:", self.entry_data.path.display());
-
-            let mut term_counts: Vec<_> = self.entry_data.term_count.iter().collect();
-            term_counts.sort_by_key(|entry| entry.1);
-
-            println!(" terms: {}", term_counts.len());
-            println!(" top 5:");
-            for (term, count) in term_counts[term_counts.len().saturating_sub(5)..]
-                .iter()
-                .rev()
-            {
-                let bar = pct_to_bar(**count as f64, 50);
-                println!("  {} {} {}", term, count, bar);
-            }
-        }
-
         self.sink
             .write()
             .expect("write")
