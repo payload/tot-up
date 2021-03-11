@@ -42,6 +42,8 @@ struct EntryData {
 }
 
 fn main() {
+    let root_path = std::env::args().nth(1).unwrap_or("./".into());
+
     let data = SessionData::default();
     let data_locked = Arc::new(RwLock::new(data));
 
@@ -54,7 +56,7 @@ fn main() {
         WalkState::Continue
     };
 
-    WalkBuilder::new("./")
+    WalkBuilder::new(&root_path)
         // .threads(8) // TODO does it really use all cores?
         .build_parallel()
         .run(|| Box::new(handle_dir_entry));
