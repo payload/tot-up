@@ -154,11 +154,7 @@ impl Sink for CollectData {
             let string: &str = &String::from_utf8_lossy(slice);
             let term = Term::from(string);
 
-            if let Some(count) = term_count.get_mut(&term) {
-                *count += 1;
-            } else {
-                term_count.insert(term, 1);
-            }
+            term_count.entry(term).and_modify(|x| *x += 1).or_insert(1);
 
             true
         });
