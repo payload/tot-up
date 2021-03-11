@@ -112,7 +112,7 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
 
     let path = entry.path();
     let matcher = grep::regex::RegexMatcherBuilder::new()
-        .build(r"\w{3}\w*")
+        .build(r"\w{4}\w*")
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
