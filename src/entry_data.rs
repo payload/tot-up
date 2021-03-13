@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::Metadata};
 
 use internment::ArcIntern;
 
@@ -10,6 +10,7 @@ pub type Term = ArcIntern<String>;
 #[derive(Clone, Debug, Default)]
 pub struct EntryData {
     path: String,
+    metadata: Option<Metadata>,
     term_count: HashMap<Term, usize>,
 }
 
@@ -17,6 +18,7 @@ impl EntryData {
     pub fn new(path: &str) -> Self {
         Self {
             path: path.into(),
+            metadata: std::fs::metadata(path).ok(),
             ..Self::default()
         }
     }
@@ -41,6 +43,10 @@ impl EntryData {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    pub fn metadata(&self) -> Option<&Metadata> {
+        self.metadata.as_ref()
     }
 }
 

@@ -18,10 +18,13 @@ impl FormatSession {
             .directories
             .iter()
             .map(|(_, e)| e)
-            .filter(|e| e.path() == &data.root_path)
-            .map(|e| Cell::new(&self.display_histogram(e, h)));
-        let table = self.prettytable(cells.collect());
-        table.printstd();
+            .filter(|e| e.metadata().map_or(false, |m| m.is_dir()))
+            .map(|e| self.display_histogram(e, h))
+            .take(4)
+            .for_each(|h| println!("{}", h));
+
+        // let table = self.prettytable(cells.map(|c| Cell::new(c)).collect());
+        // table.printstd();
     }
 
     fn display_histogram(&self, data: &EntryData, height: usize) -> String {
