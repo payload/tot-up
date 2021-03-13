@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    io::stdin,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use grep::{
     matcher::Matcher,
@@ -11,20 +6,20 @@ use grep::{
     searcher::{Searcher, Sink, SinkFinish, SinkMatch},
 };
 use ignore::{DirEntry, WalkBuilder, WalkState};
-use internment::ArcIntern;
 
 use prettytable::{
     format::{FormatBuilder, LinePosition, LineSeparator},
     Cell, Row, Table,
 };
 
+mod entry_data;
+use entry_data::*;
+
 // SessionData holds terms, data hierarchy, filters
 // Walker iterates directories
 // CollectData collects EntryData from files
 // EntryData holds terms and counts for an entry
-
-/// trade higher runtime with lower peak memory usage
-type Term = ArcIntern<String>;
+// Term is not a String, but a ArcIntern<String>, so equal strings a globally unique
 
 #[derive(Default)]
 struct SessionData {
@@ -38,12 +33,6 @@ struct CollectData {
     matcher: RegexMatcher,
     entry_data: EntryData,
     sink: Arc<RwLock<SessionData>>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct EntryData {
-    path: PathBuf,
-    term_count: HashMap<Term, u64>,
 }
 
 fn main() {
@@ -97,35 +86,6 @@ fn main() {
     table.printstd();
 }
 
-impl EntryData {
-    fn display_histogram(&self, height: usize) -> String {
-        // self.path
-        // ... bars count term
-        let line_one = Some(format!("{}:\n", self.path.display())).into_iter();
-
-        let mut term_counts: Vec<_> = self.term_count.iter().collect();
-        term_counts.sort_by_key(|entry| std::u64::MAX - entry.1);
-        let max_count = *term_counts.first().unwrap().1 as f64;
-
-        let bars_counts = term_counts.iter().map(|(term, count)| {
-            format!(
-                "{} {} {}\n",
-                pct_to_bar(**count as f64 / max_count, 10),
-                count,
-                term
-            )
-        });
-
-        line_one.chain(bars_counts).take(height).collect()
-    }
-}
-
-fn tot_up(dest: &mut HashMap<Term, u64>, src: &HashMap<Term, u64>) {
-    for (key, value) in src.iter() {
-        *dest.entry(key.clone()).or_default() += *value;
-    }
-}
-
 fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
     if !entry.file_type().unwrap().is_file() {
         return;
@@ -137,10 +97,7 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
-        entry_data: EntryData {
-            path: path.to_path_buf(),
-            ..Default::default()
-        },
+        entry_data: EntryData::new(path),
         sink: data_sink.clone(),
     };
 
@@ -168,16 +125,12 @@ impl Sink for CollectData {
         _searcher: &Searcher,
         sink_match: &SinkMatch,
     ) -> Result<bool, Self::Error> {
-        let term_count = &mut self.entry_data.term_count;
+        let entry_data = &mut self.entry_data;
 
         let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
             let slice = &sink_match.bytes()[mat];
             let string: &str = &String::from_utf8_lossy(slice);
-            let term = Term::from(string);
-
-            // counting the terms per file
-            term_count.entry(term).and_modify(|x| *x += 1).or_insert(1);
-
+            entry_data.inc_term(string);
             true
         });
 
@@ -192,23 +145,4 @@ impl Sink for CollectData {
 
         Ok(())
     }
-}
-
-const BARS: &[char] = &[' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-
-fn pct_to_bar(pct: f64, width: usize) -> String {
-    let mult = (BARS.len() - 1) * width;
-    let ct = pct * (mult as f64);
-    let ct = ct.round();
-    let mut ct = ct as usize;
-
-    let mut out = String::with_capacity(width);
-
-    for _ in 0..width {
-        let idx = std::cmp::min(ct, BARS.len() - 1);
-        ct -= idx;
-        out.push(BARS[idx]);
-    }
-
-    out
 }
