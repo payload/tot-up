@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::collections::HashMap;
 
 use internment::ArcIntern;
 
@@ -9,14 +9,14 @@ pub type Term = ArcIntern<String>;
 /// Data per entry is the map of used terms and their counts.
 #[derive(Clone, Debug, Default)]
 pub struct EntryData {
-    path: PathBuf,
+    path: String,
     term_count: HashMap<Term, u64>,
 }
 
 impl EntryData {
-    pub fn new(path: &Path) -> Self {
+    pub fn new(path: &str) -> Self {
         Self {
-            path: path.to_path_buf(),
+            path: path.into(),
             ..Self::default()
         }
     }
@@ -27,13 +27,16 @@ impl EntryData {
 
     pub fn inc_term(&mut self, string: &str) {
         let term = Term::from(string);
-        self.term_count.entry(term).and_modify(|x| *x += 1).or_insert(1);
+        self.term_count
+            .entry(term)
+            .and_modify(|x| *x += 1)
+            .or_insert(1);
     }
 
     pub fn display_histogram(&self, height: usize) -> String {
         // self.path
         // ... bars count term
-        let line_one = Some(format!("{}:\n", self.path.display())).into_iter();
+        let line_one = Some(format!("{}:\n", self.path)).into_iter();
 
         let mut term_counts: Vec<_> = self.term_count.iter().collect();
         term_counts.sort_by_key(|entry| std::u64::MAX - entry.1);
@@ -75,4 +78,16 @@ fn tot_up(dest: &mut HashMap<Term, u64>, src: &HashMap<Term, u64>) {
     for (key, value) in src.iter() {
         *dest.entry(key.clone()).or_default() += *value;
     }
+}
+
+#[test]
+fn EntryData_tot_up_term_counts() {
+    let mut foo = EntryData::new("foo");
+    foo.inc_term("term1");
+
+    let mut bar = EntryData::new("bar");
+    bar.inc_term("term1");
+    bar.inc_term("term2");
+
+    foo.tot_up(&bar);
 }

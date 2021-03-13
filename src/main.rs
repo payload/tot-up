@@ -97,7 +97,7 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
-        entry_data: EntryData::new(path),
+        entry_data: EntryData::new(&path.to_string_lossy()),
         sink: data_sink.clone(),
     };
 
