@@ -15,9 +15,10 @@ impl FormatSession {
     pub fn print_stdout(&self, data: &SessionData, (_w, h): (usize, usize)) {
         // filter, tot up, sort, limit, format & print
         let cells = data
-            .entries
+            .directories
             .iter()
-            .take(3)
+            .map(|(_, e)| e)
+            .filter(|e| e.path() == &data.root_path)
             .map(|e| Cell::new(&self.display_histogram(e, h)));
         let table = self.prettytable(cells.collect());
         table.printstd();
@@ -29,7 +30,7 @@ impl FormatSession {
         let line_one = Some(format!("{}:\n", data.path())).into_iter();
 
         let term_counts = data.sorted_term_counts();
-        let max_count = *term_counts.first().unwrap().1 as f64;
+        let max_count = term_counts.first().map(|e| *e.1 as f64).unwrap_or_default();
 
         let bars_counts = term_counts.iter().map(|(term, count)| {
             format!(

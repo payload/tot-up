@@ -21,7 +21,7 @@ use session_data::*;
 
 struct CollectData {
     matcher: RegexMatcher,
-    entry_data: EntryData,
+    entry_data: Option<EntryData>,
     sink: Arc<RwLock<SessionData>>,
 }
 
@@ -64,24 +64,13 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
-        entry_data: EntryData::new(&path.to_string_lossy()),
+        entry_data: Some(EntryData::new(&path.to_string_lossy())),
         sink: data_sink.clone(),
     };
 
     grep::searcher::Searcher::new()
         .search_path(matcher, path, collect_data)
         .expect("search path");
-}
-
-impl SessionData {
-    fn insert_entry_data(&mut self, data: &EntryData) {
-        #[cfg(feature = "record-terms")]
-        for (key, _value) in data.term_count.iter() {
-            self.terms.insert(key.clone());
-        }
-
-        self.entries.push(data.clone());
-    }
 }
 
 impl Sink for CollectData {
@@ -92,7 +81,7 @@ impl Sink for CollectData {
         _searcher: &Searcher,
         sink_match: &SinkMatch,
     ) -> Result<bool, Self::Error> {
-        let entry_data = &mut self.entry_data;
+        let entry_data = self.entry_data.as_mut().unwrap();
 
         let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
             let slice = &sink_match.bytes()[mat];
@@ -107,9 +96,8 @@ impl Sink for CollectData {
     fn finish(&mut self, _searcher: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
         self.sink
             .write()
-            .expect("write")
-            .insert_entry_data(&self.entry_data);
-
+            .expect("collect data sink write")
+            .insert_entry_data(self.entry_data.take().unwrap());
         Ok(())
     }
 }
