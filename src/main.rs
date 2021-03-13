@@ -8,6 +8,8 @@ use grep::{
 };
 use ignore::{DirEntry, WalkBuilder, WalkState};
 
+use structopt::StructOpt;
+
 // SessionData holds terms, data hierarchy, filters
 // Walker iterates directories
 // CollectData collects EntryData from files
@@ -19,6 +21,15 @@ mod session_data;
 use entry_data::*;
 use session_data::*;
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "totup")]
+struct Opt {
+    #[structopt(short = "n", long)]
+    count: Option<usize>,
+
+    root_path: String,
+}
+
 struct CollectData {
     matcher: RegexMatcher,
     entry_data: Option<EntryData>,
@@ -26,6 +37,8 @@ struct CollectData {
 }
 
 fn main() {
+    let opt = Opt::from_args();
+
     let root_path = std::env::args().nth(1).unwrap_or("./".into());
     let data = SessionData {
         root_path: root_path.clone(),
@@ -49,7 +62,10 @@ fn main() {
 
     let data = data_locked.read().expect("unlock");
 
-    let formatter = FormatSession::new();
+    let formatter = FormatSession {
+        count: opt.count,
+        ..Default::default()
+    };
     formatter.print_stdout(&data, term_size::dimensions().unwrap_or((80, 40)));
 }
 

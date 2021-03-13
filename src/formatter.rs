@@ -5,11 +5,14 @@ use prettytable::{
     Cell, Row, Table,
 };
 
-pub struct FormatSession;
+#[derive(Default, Debug)]
+pub struct FormatSession {
+    pub count: Option<usize>,
+}
 
 impl FormatSession {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     pub fn print_stdout(&self, data: &SessionData, (_w, h): (usize, usize)) {
@@ -19,8 +22,7 @@ impl FormatSession {
             .iter()
             .map(|(_, e)| e)
             .filter(|e| e.metadata().map_or(false, |m| m.is_dir()))
-            .map(|e| self.display_histogram(e, h))
-            .take(4)
+            .map(|e| self.display_histogram(e, self.count.unwrap_or(h)))
             .for_each(|h| println!("{}", h));
 
         // let table = self.prettytable(cells.map(|c| Cell::new(c)).collect());
