@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use formatter::FormatSession;
 use grep::{
     matcher::Matcher,
     regex::RegexMatcher,
@@ -7,27 +8,16 @@ use grep::{
 };
 use ignore::{DirEntry, WalkBuilder, WalkState};
 
-use prettytable::{
-    format::{FormatBuilder, LinePosition, LineSeparator},
-    Cell, Row, Table,
-};
-
-mod entry_data;
-use entry_data::*;
-
 // SessionData holds terms, data hierarchy, filters
 // Walker iterates directories
 // CollectData collects EntryData from files
 // EntryData holds terms and counts for an entry
 // Term is not a String, but a ArcIntern<String>, so equal strings a globally unique
-
-#[derive(Default)]
-struct SessionData {
-    #[cfg(feature = "record-terms")]
-    terms: HashSet<Term>,
-
-    entries: Vec<EntryData>,
-}
+mod entry_data;
+mod formatter;
+mod session_data;
+use entry_data::*;
+use session_data::*;
 
 struct CollectData {
     matcher: RegexMatcher,
@@ -37,10 +27,12 @@ struct CollectData {
 
 fn main() {
     let root_path = std::env::args().nth(1).unwrap_or("./".into());
+    let data = SessionData {
+        root_path: root_path.clone(),
+        ..Default::default()
+    };
 
-    let data = SessionData::default();
     let data_locked = Arc::new(RwLock::new(data));
-
     let handle_dir_entry = |result| {
         match result {
             Ok(entry) => search(entry, data_locked.clone()),
@@ -57,33 +49,8 @@ fn main() {
 
     let data = data_locked.read().expect("unlock");
 
-    let (_w, h) = term_size::dimensions().unwrap_or((80, 40));
-    let top_n = h - 2; // TODO this fails for tiniest terminals
-
-    let cols: Vec<Cell> = data
-        .entries
-        .iter()
-        .map(|e| Cell::new(&e.display_histogram(top_n)))
-        .collect();
-
-    let mut table = Table::new();
-    table.set_format(
-        FormatBuilder::new()
-            .borders('│')
-            .padding(1, 1)
-            .separators(
-                &[LinePosition::Title],
-                LineSeparator::new('─', '─', '├', '┤'),
-            )
-            .separators(&[LinePosition::Top], LineSeparator::new('─', '─', '┌', '┐'))
-            .separators(
-                &[LinePosition::Bottom],
-                LineSeparator::new('─', '─', '└', '┘'),
-            )
-            .build(),
-    );
-    table.add_row(Row::new(cols));
-    table.printstd();
+    let formatter = FormatSession::new();
+    formatter.print_stdout(&data, term_size::dimensions().unwrap_or((80, 40)));
 }
 
 fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
