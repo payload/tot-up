@@ -1,32 +1,42 @@
 use crate::{entry_data::EntryData, session_data::SessionData};
 
+use clap::arg_enum;
 use prettytable::{
     format::{FormatBuilder, LinePosition, LineSeparator},
     Cell, Row, Table,
 };
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct FormatSession {
     pub count: Option<usize>,
+    pub style: DisplayStyle,
+}
+
+arg_enum! {
+#[derive(Debug)]
+pub enum DisplayStyle {
+    Histograms,
+    HistogramsTable,
+}
 }
 
 impl FormatSession {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn print_stdout(&self, data: &SessionData, (_w, h): (usize, usize)) {
         // filter, tot up, sort, limit, format & print
-        let cells = data
+        let hists = data
             .directories
             .iter()
             .map(|(_, e)| e)
             .filter(|e| e.metadata().map_or(false, |m| m.is_dir()))
-            .map(|e| self.display_histogram(e, self.count.unwrap_or(h)))
-            .for_each(|h| println!("{}", h));
+            .map(|e| self.display_histogram(e, self.count.unwrap_or(h)));
 
-        // let table = self.prettytable(cells.map(|c| Cell::new(c)).collect());
-        // table.printstd();
+        match self.style {
+            DisplayStyle::Histograms => hists.for_each(|h| println!("{}", h)),
+            DisplayStyle::HistogramsTable => {
+                let table = self.prettytable(hists.map(|hist| Cell::new(&hist)).collect());
+                table.printstd();
+            }
+        }
     }
 
     fn display_histogram(&self, data: &EntryData, height: usize) -> String {

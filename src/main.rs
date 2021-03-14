@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use formatter::FormatSession;
+use formatter::{DisplayStyle, FormatSession};
 use grep::{
     matcher::Matcher,
     regex::RegexMatcher,
@@ -27,7 +27,13 @@ struct Opt {
     #[structopt(short = "n", long)]
     count: Option<usize>,
 
+    #[structopt(short, long, default_value = r"\w{4}\w*")]
+    term: String,
+
     root_path: String,
+
+    #[structopt(long, possible_values = &DisplayStyle::variants(), case_insensitive = true, default_value = "histograms")]
+    display_style: DisplayStyle,
 }
 
 struct CollectData {
@@ -41,6 +47,7 @@ fn main() {
 
     let root_path = std::env::args().nth(1).unwrap_or("./".into());
     let data = SessionData {
+        term_regex: opt.term,
         root_path: root_path.clone(),
         ..Default::default()
     };
@@ -64,7 +71,7 @@ fn main() {
 
     let formatter = FormatSession {
         count: opt.count,
-        ..Default::default()
+        style: opt.display_style,
     };
     formatter.print_stdout(&data, term_size::dimensions().unwrap_or((80, 40)));
 }
@@ -74,9 +81,14 @@ fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
         return;
     }
 
+    let term_regex = data_sink
+        .read()
+        .expect("search session data read")
+        .term_regex
+        .clone();
     let path = entry.path();
     let matcher = grep::regex::RegexMatcherBuilder::new()
-        .build(r"\w{4}\w*")
+        .build(&term_regex)
         .expect("good regex");
     let collect_data = CollectData {
         matcher: matcher.clone(),
