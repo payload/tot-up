@@ -52,13 +52,20 @@ impl FormatSession {
             .into_iter()
             .map(|entry| (entry.path(), entry.sorted_term_counts()))
             .collect();
-        let count = self.count.unwrap_or_else(|| {
-            sorted
+
+        let (count, sorted) = if let Some(count) = self.count {
+            (count, sorted)
+        } else {
+            let count = sorted
                 .iter()
                 .map(|(_, terms)| terms.len())
                 .max()
-                .unwrap_or(0)
-        });
+                .unwrap_or(0);
+            let mut sorted = sorted;
+            sorted.sort_by_key(|(_, terms)| std::usize::MAX - terms.len());
+            (count, sorted)
+        };
+
         let formatted: Vec<Vec<String>> = sorted
             .into_iter()
             .map(|(path, terms)| self.lineformat_entry(path, &terms[0..count.min(terms.len())]))
@@ -89,15 +96,21 @@ impl FormatSession {
 
             for row in 0..rows {
                 for line in 0..count + 1 {
+                    let mut empty = true;
+
                     for col in 0..cols {
                         let index = row * cols + col;
                         if let Some(lines) = formatted.get(index) {
                             if let Some(line) = lines.get(line) {
                                 print!("{:width$}", line, width = longest);
+                                empty = false;
                             }
                         }
                     }
-                    println!();
+
+                    if !empty {
+                        println!();
+                    }
                 }
             }
         }
