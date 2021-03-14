@@ -1,4 +1,7 @@
-use crate::{entry_data::EntryData, session_data::SessionData};
+use crate::{
+    entry_data::{EntryData, Term},
+    session_data::SessionData,
+};
 
 use clap::arg_enum;
 use prettytable::{
@@ -13,30 +16,123 @@ pub struct FormatSession {
 }
 
 arg_enum! {
-#[derive(Debug)]
-pub enum DisplayStyle {
-    Histograms,
-    HistogramsTable,
-}
+    #[derive(Debug)]
+    pub enum DisplayStyle {
+        Vert,
+        Hori,
+        Grid,
+    }
 }
 
 impl FormatSession {
-    pub fn print_stdout(&self, data: &SessionData, (_w, h): (usize, usize)) {
+    pub fn print_stdout(&self, data: &SessionData, (w, h): (usize, usize)) {
         let height = self.count.unwrap_or(h);
 
-        let hists = data
+        let entries = data
             .root_paths
             .iter()
-            .filter_map(|path| data.directories.get(path))
-            .map(|entry| self.display_histogram(entry, height));
+            .filter_map(|path| data.directories.get(path));
 
         match self.style {
-            DisplayStyle::Histograms => hists.for_each(|h| println!("{}", h)),
-            DisplayStyle::HistogramsTable => {
+            DisplayStyle::Vert => {
+                let hists = entries.map(|entry| self.display_histogram(entry, height));
+                hists.for_each(|h| println!("{}", h));
+            }
+            DisplayStyle::Hori => {
+                let hists = entries.map(|entry| self.display_histogram(entry, height));
                 let table = self.prettytable(hists.map(|hist| Cell::new(&hist)).collect());
                 table.printstd();
             }
+            DisplayStyle::Grid => self.print_grid(entries.collect(), w, h),
         }
+    }
+
+    fn print_grid(&self, entries: Vec<&EntryData>, width: usize, _height: usize) {
+        let sorted: Vec<_> = entries
+            .into_iter()
+            .map(|entry| (entry.path(), entry.sorted_term_counts()))
+            .collect();
+        let count = self.count.unwrap_or_else(|| {
+            sorted
+                .iter()
+                .map(|(_, terms)| terms.len())
+                .max()
+                .unwrap_or(0)
+        });
+        let formatted: Vec<Vec<String>> = sorted
+            .into_iter()
+            .map(|(path, terms)| self.lineformat_entry(path, &terms[0..count.min(terms.len())]))
+            .collect();
+        let longest = formatted
+            .iter()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.chars().count())
+                    .max()
+                    .unwrap_or(0)
+            })
+            .max()
+            .unwrap_or(0);
+
+        if longest > width / 2 {
+            for entry in formatted {
+                for line in entry {
+                    println!("{}", line);
+                }
+            }
+        } else {
+            let panels = formatted.len();
+            let cols = width / longest;
+            let rows = panels / cols;
+            let rows = if rows * cols < panels { rows + 1 } else { rows };
+
+            for row in 0..rows {
+                for line in 0..count + 1 {
+                    for col in 0..cols {
+                        let index = row * cols + col;
+                        if let Some(lines) = formatted.get(index) {
+                            if let Some(line) = lines.get(line) {
+                                print!("{:width$}", line, width = longest);
+                            }
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+    }
+
+    fn lineformat_entry(&self, path: &str, terms: &[(&Term, &usize)]) -> Vec<String> {
+        let mut lines = Vec::with_capacity(1 + terms.len());
+        lines.push(String::with_capacity(path.len()));
+
+        let max_count = terms.first().map_or(0, |t| *t.1);
+        lines.extend(
+            terms
+                .into_iter()
+                .map(|(term, &count)| self.format_term_count(max_count, &term, count)),
+        );
+
+        let longest = lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        let chars = path.chars().count();
+        lines[0].extend(path.chars().skip(chars.saturating_sub(longest)));
+        lines[0].push(' ');
+
+        lines
+    }
+
+    fn format_term_count(&self, max_count: usize, term: &Term, count: usize) -> String {
+        format!(
+            "{} {} {}",
+            pct_to_bar(count as f64 / max_count as f64, 10),
+            count,
+            term
+        )
     }
 
     fn display_histogram(&self, data: &EntryData, height: usize) -> String {

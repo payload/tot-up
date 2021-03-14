@@ -38,7 +38,7 @@ struct Opt {
 
     root_paths: Vec<String>,
 
-    #[structopt(long, possible_values = &DisplayStyle::variants(), case_insensitive = true, default_value = "histograms")]
+    #[structopt(long, possible_values = &DisplayStyle::variants(), case_insensitive = true, default_value = "grid")]
     display_style: DisplayStyle,
 }
 
