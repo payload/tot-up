@@ -116,7 +116,7 @@ fn walk_dir_and_grep_files(
                     Ok(entry) if entry.file_type().map_or(false, |t| t.is_file()) => {
                         grep_file(entry.path(), matcher.clone(), exclude.clone(), data.clone())
                     }
-                    Ok(entry) => eprintln!("ERROR: {} not a file", entry.path().display()),
+                    Ok(_) => (),
                     Err(err) => eprintln!("ERROR: {}", err),
                 }
                 WalkState::Continue
