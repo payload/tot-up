@@ -27,7 +27,7 @@ impl FormatSession {
             .directories
             .iter()
             .map(|(_, e)| e)
-            .filter(|e| e.metadata().map_or(false, |m| m.is_dir()))
+            //.filter(|e| e.metadata().map_or(false, |m| m.is_dir()))
             .map(|e| self.display_histogram(e, self.count.unwrap_or(h)));
 
         match self.style {

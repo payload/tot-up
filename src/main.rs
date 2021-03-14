@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use formatter::{DisplayStyle, FormatSession};
 use grep::{
@@ -6,7 +9,7 @@ use grep::{
     regex::RegexMatcher,
     searcher::{Searcher, Sink, SinkFinish, SinkMatch},
 };
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use ignore::{WalkBuilder, WalkState};
 
 use structopt::StructOpt;
 
@@ -30,7 +33,7 @@ struct Opt {
     #[structopt(short, long, default_value = r"\w{4}\w*")]
     term: String,
 
-    root_path: String,
+    root_paths: Vec<String>,
 
     #[structopt(long, possible_values = &DisplayStyle::variants(), case_insensitive = true, default_value = "histograms")]
     display_style: DisplayStyle,
@@ -45,27 +48,34 @@ struct CollectData {
 fn main() {
     let opt = Opt::from_args();
 
-    let root_path = std::env::args().nth(1).unwrap_or("./".into());
+    let chars: &[_] = &['\\', '/'];
+    let root_paths: Vec<String> = (opt.root_paths as Vec<String>)
+        .iter()
+        .map(|p| p.trim_end_matches(chars).to_owned())
+        .collect();
+
     let data = SessionData {
-        term_regex: opt.term,
-        root_path: root_path.clone(),
+        term_regex: opt.term.clone(),
+        root_paths: root_paths.clone(),
         ..Default::default()
     };
 
     let data_locked = Arc::new(RwLock::new(data));
-    let handle_dir_entry = |result| {
-        match result {
-            Ok(entry) => search(entry, data_locked.clone()),
-            Err(err) => eprintln!("ERROR: {}", err),
+    let matcher = grep::regex::RegexMatcherBuilder::new()
+        .build(&opt.term)
+        .expect("good regex");
+
+    for root_path in root_paths.iter() {
+        let root_path = Path::new(root_path);
+        match std::fs::metadata(root_path) {
+            Ok(m) if m.is_file() => grep_file(root_path, matcher.clone(), data_locked.clone()),
+            Ok(m) if m.is_dir() => {
+                walk_dir_and_grep_files(root_path, matcher.clone(), data_locked.clone())
+            }
+            Ok(_m) => (),
+            Err(_e) => (),
         }
-
-        WalkState::Continue
-    };
-
-    WalkBuilder::new(&root_path)
-        // .threads(8) // TODO does it really use all cores?
-        .build_parallel()
-        .run(|| Box::new(handle_dir_entry));
+    }
 
     let data = data_locked.read().expect("unlock");
 
@@ -76,29 +86,38 @@ fn main() {
     formatter.print_stdout(&data, term_size::dimensions().unwrap_or((80, 40)));
 }
 
-fn search(entry: DirEntry, data_sink: Arc<RwLock<SessionData>>) {
-    if !entry.file_type().unwrap().is_file() {
-        return;
-    }
+fn walk_dir_and_grep_files(
+    root_path: &Path,
+    matcher: RegexMatcher,
+    data: Arc<RwLock<SessionData>>,
+) {
+    WalkBuilder::new(root_path)
+        // .threads(8) // TODO does it really use all cores?
+        .build_parallel()
+        .run(|| {
+            Box::new(|result| {
+                match result {
+                    Ok(entry) if entry.file_type().map_or(false, |t| t.is_file()) => {
+                        grep_file(entry.path(), matcher.clone(), data.clone())
+                    }
+                    Ok(entry) => eprintln!("ERROR: {} not a file", entry.path().display()),
+                    Err(err) => eprintln!("ERROR: {}", err),
+                }
+                WalkState::Continue
+            })
+        });
+}
 
-    let term_regex = data_sink
-        .read()
-        .expect("search session data read")
-        .term_regex
-        .clone();
-    let path = entry.path();
-    let matcher = grep::regex::RegexMatcherBuilder::new()
-        .build(&term_regex)
-        .expect("good regex");
+fn grep_file(path: &Path, matcher: RegexMatcher, data: Arc<RwLock<SessionData>>) {
     let collect_data = CollectData {
         matcher: matcher.clone(),
         entry_data: Some(EntryData::new(&path.to_string_lossy())),
-        sink: data_sink.clone(),
+        sink: data.clone(),
     };
 
     grep::searcher::Searcher::new()
         .search_path(matcher, path, collect_data)
-        .expect("search path");
+        .expect("grep Searcher::search_path");
 }
 
 impl Sink for CollectData {
