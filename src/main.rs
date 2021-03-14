@@ -30,7 +30,7 @@ struct Opt {
     #[structopt(short = "n", long)]
     count: Option<usize>,
 
-    #[structopt(short, long, default_value = r"\w{4}\w*")]
+    #[structopt(short, long, default_value = r"\w{4,}")]
     term: String,
 
     #[structopt(short, long, default_value = r"^$")]
