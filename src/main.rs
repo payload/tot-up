@@ -33,8 +33,8 @@ struct Opt {
     #[structopt(short, long, default_value = r"\w{4}\w*")]
     term: String,
 
-    #[structopt(short, long)]
-    exclude: Option<String>,
+    #[structopt(short, long, default_value = r"^$")]
+    exclude: String,
 
     root_paths: Vec<String>,
 
@@ -69,7 +69,7 @@ fn main() {
         .build(&opt.term)
         .expect("term regex");
     let exclude = grep::regex::RegexMatcherBuilder::new()
-        .build(&opt.exclude.unwrap_or_else(|| "^$".into()))
+        .build(&opt.exclude)
         .expect("exclude regex");
 
     for root_path in root_paths.iter() {
