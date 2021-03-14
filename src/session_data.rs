@@ -7,7 +7,6 @@ use crate::entry_data::{EntryData, Term};
 
 #[derive(Default)]
 pub struct SessionData {
-    pub term_regex: String,
     pub root_paths: Vec<String>,
     pub entries: Vec<EntryData>,
     pub terms: HashSet<Term>,

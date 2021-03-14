@@ -33,6 +33,9 @@ struct Opt {
     #[structopt(short, long, default_value = r"\w{4}\w*")]
     term: String,
 
+    #[structopt(short, long)]
+    exclude: Option<String>,
+
     root_paths: Vec<String>,
 
     #[structopt(long, possible_values = &DisplayStyle::variants(), case_insensitive = true, default_value = "histograms")]
@@ -40,22 +43,23 @@ struct Opt {
 }
 
 struct CollectData {
+    exclude: RegexMatcher,
     matcher: RegexMatcher,
     entry_data: Option<EntryData>,
     sink: Arc<RwLock<SessionData>>,
 }
 
 fn main() {
-    let opt = Opt::from_args();
+    let opt: Opt = Opt::from_args();
 
     let chars: &[_] = &['\\', '/'];
-    let root_paths: Vec<String> = (opt.root_paths as Vec<String>)
+    let root_paths: Vec<String> = opt
+        .root_paths
         .iter()
         .map(|p| p.trim_end_matches(chars).to_owned())
         .collect();
 
     let data = SessionData {
-        term_regex: opt.term.clone(),
         root_paths: root_paths.clone(),
         ..Default::default()
     };
@@ -63,15 +67,26 @@ fn main() {
     let data_locked = Arc::new(RwLock::new(data));
     let matcher = grep::regex::RegexMatcherBuilder::new()
         .build(&opt.term)
-        .expect("good regex");
+        .expect("term regex");
+    let exclude = grep::regex::RegexMatcherBuilder::new()
+        .build(&opt.exclude.unwrap_or_else(|| "^$".into()))
+        .expect("exclude regex");
 
     for root_path in root_paths.iter() {
         let root_path = Path::new(root_path);
         match std::fs::metadata(root_path) {
-            Ok(m) if m.is_file() => grep_file(root_path, matcher.clone(), data_locked.clone()),
-            Ok(m) if m.is_dir() => {
-                walk_dir_and_grep_files(root_path, matcher.clone(), data_locked.clone())
-            }
+            Ok(m) if m.is_file() => grep_file(
+                root_path,
+                matcher.clone(),
+                exclude.clone(),
+                data_locked.clone(),
+            ),
+            Ok(m) if m.is_dir() => walk_dir_and_grep_files(
+                root_path,
+                matcher.clone(),
+                exclude.clone(),
+                data_locked.clone(),
+            ),
             Ok(_m) => (),
             Err(_e) => (),
         }
@@ -89,6 +104,7 @@ fn main() {
 fn walk_dir_and_grep_files(
     root_path: &Path,
     matcher: RegexMatcher,
+    exclude: RegexMatcher,
     data: Arc<RwLock<SessionData>>,
 ) {
     WalkBuilder::new(root_path)
@@ -98,7 +114,7 @@ fn walk_dir_and_grep_files(
             Box::new(|result| {
                 match result {
                     Ok(entry) if entry.file_type().map_or(false, |t| t.is_file()) => {
-                        grep_file(entry.path(), matcher.clone(), data.clone())
+                        grep_file(entry.path(), matcher.clone(), exclude.clone(), data.clone())
                     }
                     Ok(entry) => eprintln!("ERROR: {} not a file", entry.path().display()),
                     Err(err) => eprintln!("ERROR: {}", err),
@@ -108,8 +124,14 @@ fn walk_dir_and_grep_files(
         });
 }
 
-fn grep_file(path: &Path, matcher: RegexMatcher, data: Arc<RwLock<SessionData>>) {
+fn grep_file(
+    path: &Path,
+    matcher: RegexMatcher,
+    exclude: RegexMatcher,
+    data: Arc<RwLock<SessionData>>,
+) {
     let collect_data = CollectData {
+        exclude: exclude,
         matcher: matcher.clone(),
         entry_data: Some(EntryData::new(&path.to_string_lossy())),
         sink: data.clone(),
@@ -129,11 +151,16 @@ impl Sink for CollectData {
         sink_match: &SinkMatch,
     ) -> Result<bool, Self::Error> {
         let entry_data = self.entry_data.as_mut().unwrap();
+        let exclude = &self.exclude;
 
         let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
             let slice = &sink_match.bytes()[mat];
             let string: &str = &String::from_utf8_lossy(slice);
-            entry_data.inc_term(string);
+
+            if !exclude.is_match(slice).unwrap_or(false) {
+                entry_data.inc_term(string);
+            }
+
             true
         });
 
