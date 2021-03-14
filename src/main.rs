@@ -36,6 +36,9 @@ struct Opt {
     #[structopt(short, long, default_value = r"^$")]
     exclude: String,
 
+    #[structopt(short, long)]
+    ignore_case: bool,
+
     root_paths: Vec<String>,
 
     #[structopt(long, possible_values = &DisplayStyle::variants(), case_insensitive = true, default_value = "grid")]
@@ -43,6 +46,7 @@ struct Opt {
 }
 
 struct CollectData {
+    ignore_case: bool,
     exclude: RegexMatcher,
     matcher: RegexMatcher,
     entry_data: Option<EntryData>,
@@ -66,9 +70,11 @@ fn main() {
 
     let data_locked = Arc::new(RwLock::new(data));
     let matcher = grep::regex::RegexMatcherBuilder::new()
+        .case_insensitive(opt.ignore_case)
         .build(&opt.term)
         .expect("term regex");
     let exclude = grep::regex::RegexMatcherBuilder::new()
+        .case_insensitive(opt.ignore_case)
         .build(&opt.exclude)
         .expect("exclude regex");
 
@@ -77,12 +83,14 @@ fn main() {
         match std::fs::metadata(root_path) {
             Ok(m) if m.is_file() => grep_file(
                 root_path,
+                opt.ignore_case,
                 matcher.clone(),
                 exclude.clone(),
                 data_locked.clone(),
             ),
             Ok(m) if m.is_dir() => walk_dir_and_grep_files(
                 root_path,
+                opt.ignore_case,
                 matcher.clone(),
                 exclude.clone(),
                 data_locked.clone(),
@@ -103,6 +111,7 @@ fn main() {
 
 fn walk_dir_and_grep_files(
     root_path: &Path,
+    ignore_case: bool,
     matcher: RegexMatcher,
     exclude: RegexMatcher,
     data: Arc<RwLock<SessionData>>,
@@ -113,9 +122,13 @@ fn walk_dir_and_grep_files(
         .run(|| {
             Box::new(|result| {
                 match result {
-                    Ok(entry) if entry.file_type().map_or(false, |t| t.is_file()) => {
-                        grep_file(entry.path(), matcher.clone(), exclude.clone(), data.clone())
-                    }
+                    Ok(entry) if entry.file_type().map_or(false, |t| t.is_file()) => grep_file(
+                        entry.path(),
+                        ignore_case,
+                        matcher.clone(),
+                        exclude.clone(),
+                        data.clone(),
+                    ),
                     Ok(_) => (),
                     Err(err) => eprintln!("ERROR: {}", err),
                 }
@@ -126,11 +139,13 @@ fn walk_dir_and_grep_files(
 
 fn grep_file(
     path: &Path,
+    ignore_case: bool,
     matcher: RegexMatcher,
     exclude: RegexMatcher,
     data: Arc<RwLock<SessionData>>,
 ) {
     let collect_data = CollectData {
+        ignore_case: ignore_case,
         exclude: exclude,
         matcher: matcher.clone(),
         entry_data: Some(EntryData::new(&path.to_string_lossy())),
@@ -152,6 +167,7 @@ impl Sink for CollectData {
     ) -> Result<bool, Self::Error> {
         let entry_data = self.entry_data.as_mut().unwrap();
         let exclude = &self.exclude;
+        let ignore_case = self.ignore_case;
 
         // Here we use matcher.captures_iter to optional use the capture group 1
         // to skip/filter all the matching characters at the boundary.
@@ -164,7 +180,9 @@ impl Sink for CollectData {
             .captures_iter(sink_match.bytes(), &mut captures, |caps| {
                 let mat = caps.get(1).unwrap_or_else(|| caps.get(0).unwrap());
                 let slice = &sink_match.bytes()[mat];
-                let string: &str = &String::from_utf8_lossy(slice);
+                let cow = String::from_utf8_lossy(slice);
+                let lowercase = ignore_case.then(|| cow.to_lowercase());
+                let string: &str = lowercase.as_ref().map(|r| r.as_str()).unwrap_or(&cow);
 
                 if !exclude.is_match(slice).unwrap_or(false) {
                     entry_data.inc_term(string);
