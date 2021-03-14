@@ -5,7 +5,7 @@ use std::{
 
 use formatter::{DisplayStyle, FormatSession};
 use grep::{
-    matcher::Matcher,
+    matcher::{Captures, Matcher},
     regex::RegexMatcher,
     searcher::{Searcher, Sink, SinkFinish, SinkMatch},
 };
@@ -153,16 +153,25 @@ impl Sink for CollectData {
         let entry_data = self.entry_data.as_mut().unwrap();
         let exclude = &self.exclude;
 
-        let _ = self.matcher.find_iter(sink_match.bytes(), |mat| {
-            let slice = &sink_match.bytes()[mat];
-            let string: &str = &String::from_utf8_lossy(slice);
+        // Here we use matcher.captures_iter to optional use the capture group 1
+        // to skip/filter all the matching characters at the boundary.
+        // For example regex (\w+)[.?!] finds words at the end of sentences,
+        // but ignores the end sign when capturing and counting.
+        let mut captures = self.matcher.new_captures().expect("CollectData captures");
 
-            if !exclude.is_match(slice).unwrap_or(false) {
-                entry_data.inc_term(string);
-            }
+        let _ = self
+            .matcher
+            .captures_iter(sink_match.bytes(), &mut captures, |caps| {
+                let mat = caps.get(1).unwrap_or_else(|| caps.get(0).unwrap());
+                let slice = &sink_match.bytes()[mat];
+                let string: &str = &String::from_utf8_lossy(slice);
 
-            true
-        });
+                if !exclude.is_match(slice).unwrap_or(false) {
+                    entry_data.inc_term(string);
+                }
+
+                true
+            });
 
         Ok(true)
     }
