@@ -22,13 +22,13 @@ pub enum DisplayStyle {
 
 impl FormatSession {
     pub fn print_stdout(&self, data: &SessionData, (_w, h): (usize, usize)) {
-        // filter, tot up, sort, limit, format & print
+        let height = self.count.unwrap_or(h);
+
         let hists = data
-            .directories
+            .root_paths
             .iter()
-            .map(|(_, e)| e)
-            //.filter(|e| e.metadata().map_or(false, |m| m.is_dir()))
-            .map(|e| self.display_histogram(e, self.count.unwrap_or(h)));
+            .filter_map(|path| data.directories.get(path))
+            .map(|entry| self.display_histogram(entry, height));
 
         match self.style {
             DisplayStyle::Histograms => hists.for_each(|h| println!("{}", h)),
